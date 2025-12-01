@@ -1,72 +1,118 @@
-import SwiftUI
-import AppKit
-import CoreText
+//
+//  TextToShape.swift
+//  Text-Shape
+//
+//  Created by Balaji Venkatesh on 20/11/25.
+//
 
-extension NSFont {
-    var ctFont: CTFont { CTFontCreateWithName(self.fontName as CFString, self.pointSize, nil) }
+//import SwiftUI
+//import AppKit
+//
+///// Glass-Effect Text View
+///// Fallsback to given color for older versions
+//struct GlassEffectText: View {
+//    var text: String
+//    var font: NSFont
+//    var fallbackColor: Color = .primary
+//    var isClear: Bool = true
+//    var glassTint: Color = .clear
+//    var body: some View {
+//        if #available(macOS 15, *) {
+//            let textShape = TextToShape(value: text, font: font)
+//            
+//            Text(text)
+//                .font(Font(font))
+//                .opacity(0)
+//                .glassEffect((isClear ? Glass.clear : Glass.regular).tint(glassTint), in: textShape)
+//        } else {
+//            Text(text)
+//                .font(Font(font))
+//                .foregroundStyle(fallbackColor)
+//        }
+//    }
+//}
+//
+///// Text-To-Shape
+//struct TextToShape: Shape {
+//    var value: String
+//    var font: NSFont
+//    nonisolated func path(in rect: CGRect) -> Path {
+//        var path = Path()
+//        font.drawGlyphs(value) { position, glyphPath in
+//            let transform = CGAffineTransform(translationX: position.x, y: position.y)
+//                .scaledBy(x: 1, y: -1)
+//            let newPath = Path(glyphPath).applying(transform)
+//            /// Adding it to the main Path
+//            path.addPath(newPath)
+//        }
+//        
+//        /// Centering to the current bounds
+//        let bounds = path.boundingRect
+//        let offsetX = rect.midX - bounds.midX
+//        let offsetY = rect.midY - bounds.midY
+//        let centerTransform = CGAffineTransform(translationX: offsetX, y: offsetY)
+//        
+//        return path.applying(centerTransform)
+//    }
+//}
+//
+//extension NSFont {
+//    nonisolated
+//    /// Converting Font into a NSAttributedString with the given value
+//    func toNSAttributedString(_ value: String) -> NSAttributedString {
+//        return NSAttributedString(string: value, attributes: [.font: self])
+//    }
+//    
+//    nonisolated
+//    /// Return's Each Individual Glyph Path from the given text using the current font (Can be used to Draw Text as Path)
+//    func drawGlyphs(_ value: String, draw: @escaping (_ position: CGPoint, _ glyphPath: CGPath) -> ()) {
+//        let ctFont = self.ctFont
+//        let attributedString = self.toNSAttributedString(value)
+//        /// Extracting Lines & Runs from the Attributed String using CoreText APIs
+//        let lines = CTLineCreateWithAttributedString(attributedString)
+//        let runs = CTLineGetGlyphRuns(lines)
+//        
+//        for runIndex in 0..<CFArrayGetCount(runs) {
+//            let run = unsafeBitCast(CFArrayGetValueAtIndex(runs, runIndex), to: CTRun.self)
+//            let runCount = CTRunGetGlyphCount(run)
+//            
+//            /// Iterating Run and drawing Each Glyph
+//            for index in 0..<runCount {
+//                let range = CFRangeMake(index, 1)
+//                var glyph = CGGlyph()
+//                var position = CGPoint()
+//                
+//                /// Extracting Values
+//                CTRunGetGlyphs(run, range, &glyph)
+//                CTRunGetPositions(run, range, &position)
+//                
+//                if let glyphPath = CTFontCreatePathForGlyph(ctFont, glyph, nil) {
+//                    /// Passing to draw!
+//                    draw(position, glyphPath)
+//                }
+//            }
+//        }
+//    }
+//}
+//
+//extension NSFont {
+//    static func systemBold(ofSize size: CGFloat) -> NSFont {
+//        return NSFont.systemFont(ofSize: size, weight: .bold)
+//    }
+//}
 
-    func textSize(_ value: String) -> CGSize {
-        (value as NSString).size(withAttributes: [.font: self])
-    }
+//#Preview {
+//    ZStack {
+////        Rectangle()
+////            .foregroundStyle(.clear)
+////            .overlay {
+////                Image(.BG)
+////                    .resizable()
+////                    .aspectRatio(contentMode: .fill)
+////            }
+////            .ignoresSafeArea()
+//        
+//        GlassEffectText(text: "09:41", font: .systemBold(ofSize: 150))
+//    }
+//}
 
-    func path(for value: String) -> CGPath {
-        let attr = NSMutableAttributedString(string: value)
-        let range = NSRange(location: 0, length: attr.length)
-        attr.addAttribute(NSAttributedString.Key(kCTFontAttributeName as String), value: ctFont, range: range)
-
-        let line = CTLineCreateWithAttributedString(attr)
-        let runs = CTLineGetGlyphRuns(line) as NSArray
-        let combined = CGMutablePath()
-
-        for case let run as CTRun in runs {
-            let glyphCount = CTRunGetGlyphCount(run)
-            if glyphCount == 0 { continue }
-
-            var glyphs = Array(repeating: CGGlyph(), count: glyphCount)
-            var positions = Array(repeating: CGPoint.zero, count: glyphCount)
-
-            CTRunGetGlyphs(run, CFRangeMake(0, 0), &glyphs)
-            CTRunGetPositions(run, CFRangeMake(0, 0), &positions)
-
-            for i in 0..<glyphCount {
-                if let glyphPath = CTFontCreatePathForGlyph(ctFont, glyphs[i], nil) {
-                    var t = CGAffineTransform(translationX: positions[i].x, y: positions[i].y)
-                    combined.addPath(glyphPath, transform: t)
-                }
-            }
-        }
-
-        return combined
-    }
-}
-
-public struct TextShape: Shape {
-    public let text: String
-    public let font: NSFont
-
-    public init(text: String, font: NSFont) {
-        self.text = text
-        self.font = font
-    }
-
-    public func path(in rect: CGRect) -> Path {
-        let raw = font.path(for: text)
-        let size = font.textSize(text)
-
-        let scale = min(rect.width / max(size.width, 1e-6), rect.height / max(size.height, 1e-6))
-        let scaledSize = CGSize(width: size.width * scale, height: size.height * scale)
-
-        // Center horizontally, and place baseline so text reads upright in SwiftUI (flip Y)
-        var t = CGAffineTransform(translationX: rect.minX + (rect.width - scaledSize.width) / 2,
-                                  y: rect.minY + (rect.height + scaledSize.height) / 2)
-        t = t.scaledBy(x: scale, y: -scale)
-
-        let final = raw.copy(using: &t) ?? raw
-        return Path(final)
-    }
-}
-
-@inlinable
-public func TextToShape(_ text: String, font: NSFont) -> TextShape {
-    TextShape(text: text, font: font)
-}
