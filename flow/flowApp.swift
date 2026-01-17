@@ -27,7 +27,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Hide dock icon
         NSApp.setActivationPolicy(.accessory)
         
-        // Create and show overlay window
+        // Create and show overlay window with Spotify lyrics
         overlayWindow = OverlayWindow()
         overlayWindow?.makeKeyAndOrderFront(nil)
     }
@@ -61,67 +61,190 @@ class OverlayWindow: NSWindow {
         self.backgroundColor = .clear
         self.isReleasedWhenClosed = false
         
-        // Set content view
-        self.contentView = NSHostingView(rootView: ContentView())
+        // Set content view to Spotify lyric overlay
+        self.contentView = NSHostingView(rootView: SpotifyOverlayView())
     }
 }
 
-struct ContentView: View {
-    @State private var displayText = ""
+struct SpotifyOverlayView: View {
+    @StateObject private var authManager = SpotifyAuthManager()
+    @StateObject private var spotifyService: SpotifyService
+    @StateObject private var playbackTracker: PlaybackTracker
+    
+    @State private var chunks: [LyricChunk] = []
+    @State private var currentChunk: LyricChunk?
     @State private var fontSize: CGFloat = 100
-    @State private var timer: Timer?
+    @State private var screenWidth: CGFloat = 0
+    @State private var screenHeight: CGFloat = 0
+    
+    private let processor = LyricProcessor()
+    private let horizontalPadding: CGFloat = 80 // Padding on left/right
+    private let verticalPadding: CGFloat = 80   // Padding on top/bottom
+    
+    init() {
+        let service = SpotifyService(spDc: APIconstants.sp_dc)
+        _spotifyService = StateObject(wrappedValue: service)
+        _playbackTracker = StateObject(wrappedValue: PlaybackTracker(spotifyService: service))
+    }
     
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-//                let nsFont = NSFont(name: "Fastup-Regular", size: fontSize) ?? NSFont.systemFont(ofSize: fontSize)
+                if !authManager.isAuthenticated {
+                    // Show login prompt (semi-transparent)
+                    VStack(spacing: 15) {
+                        Text("Connecting to Spotify")
+                            .font(.system(size: 44, weight: .bold))
+                            .foregroundColor(.white)
+                        
+//                        Button("Login with Spotify") {
+//                            authManager.initiateLogin()
+//                        }
+//                        .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black.opacity(0.3))
+                } else {
+                    // Show current lyric chunk with glass effect
+                    if let chunk = currentChunk {
+                        GlassEffectText(
+                            text: chunk.text + " ",
+                            font: NSFont(name: "ROUND8-FOUR", size: fontSize * 1.7) ?? NSFont.systemFont(ofSize: fontSize)
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                        // Removed .transition(.opacity) - no more animation!
+                    }
+                }
+            }
+            .onAppear {
+                screenWidth = geometry.size.width
+                screenHeight = geometry.size.height
+            }
+            .onChange(of: geometry.size) { oldValue, newValue in
+                screenWidth = newValue.width
+                screenHeight = newValue.height
+                if let chunk = currentChunk {
+                    updateFontSize(for: chunk.text, screenWidth: screenWidth, screenHeight: screenHeight)
+                }
+            }
+        }
+        .onChange(of: authManager.accessToken) { oldValue, newValue in
+            if let token = newValue {
+                spotifyService.setAccessToken(token)
+                playbackTracker.startTracking()
                 
-                
-                GlassEffectText(text: displayText + " ", font: .systemBold(ofSize: fontSize))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                
-//                Rectangle()
-//                    .fill(.clear)
-//                    .frame(width: geometry.size.width, height: geometry.size.height)
-//                    .glassEffect(
-//                        .regular,
-//                        in: TextShape(text: displayText + " ", font: nsFont)
-//                    )
+                Task {
+                    await loadCurrentTrackLyrics()
+                }
+            }
+        }
+        .onChange(of: spotifyService.currentTrack?.id) { oldValue, newValue in
+            if newValue != nil {
+                Task {
+                    await loadCurrentTrackLyrics()
+                }
+            }
+        }
+        .onChange(of: playbackTracker.currentTime) { oldValue, newValue in
+            updateCurrentChunk(for: newValue)
+        }
+        .onChange(of: currentChunk?.text) { oldValue, newValue in
+            if let text = newValue {
+                updateFontSize(for: text, screenWidth: screenWidth, screenHeight: screenHeight)
             }
         }
         .onAppear {
-            startUpdating()
+            authManager.initiateLogin()
         }
         .onDisappear {
-            timer?.invalidate()
+            playbackTracker.stopTracking()
         }
     }
     
-    func startUpdating() {
-        updateText()
+    private func updateFontSize(for text: String, screenWidth: CGFloat, screenHeight: CGFloat) {
+        guard !text.isEmpty, screenWidth > 0, screenHeight > 0 else {
+            fontSize = 100
+            return
+        }
+        
+        // Available width and height for text
+        let availableWidth = screenWidth - (horizontalPadding * 2)
+        let availableHeight = screenHeight - (verticalPadding * 2)
+        
+        // Get the font to use
+        let fontName = "ROUND8-FOUR"
+        
+        // Binary search for optimal font size
+        var minSize: CGFloat = 20
+        var maxSize: CGFloat = 800
+        var optimalSize: CGFloat = 100
+        
+        // Binary search with precision of 1 point
+        while maxSize - minSize > 1 {
+            let testSize = (minSize + maxSize) / 2
+            let testFont = NSFont(name: fontName, size: testSize * 1.7) ?? NSFont.systemFont(ofSize: testSize * 1.7)
+            
+            let textSize = measureTextSize(text: text, font: testFont)
+            
+            // Check if text fits both width AND height constraints
+            if textSize.width <= availableWidth && textSize.height <= availableHeight {
+                // Text fits, try larger
+                optimalSize = testSize
+                minSize = testSize
+            } else {
+                // Text too big, try smaller
+                maxSize = testSize
+            }
+        }
+        
+        self.fontSize = optimalSize
     }
     
-    func updateText() {
-        // Generate new text
-        displayText = generateRandomString()
+    private func measureTextSize(text: String, font: NSFont) -> CGSize {
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let size = (text as NSString).size(withAttributes: attributes)
+        return size
+    }
+    
+    private func loadCurrentTrackLyrics() async {
+        guard let track = spotifyService.currentTrack else { return }
         
-        // Calculate font size based on text length
-        let baseSize: CGFloat = 500
-        let reduction: CGFloat = CGFloat(displayText.count) * 25
-        fontSize = max(50, baseSize - reduction) // Minimum font size of 50
-        
-        // Schedule next update
-        let delay = Double.random(in: 0.1...0.5)
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { _ in
-            updateText()
+        do {
+            let lines = try await spotifyService.fetchLyrics(for: track.id)
+            
+            // Preprocess lines to remove punctuation
+            let cleanedLines = lines.map { line in
+                LyricLine(
+                    startTimeMs: line.startTimeMs,
+                    words: removePunctuation(from: line.words)
+                )
+            }
+            
+            let processedChunks = processor.process(lines: cleanedLines)
+            
+            await MainActor.run {
+                chunks = processedChunks
+            }
+        } catch {
+            print("Error loading lyrics: \(error)")
         }
     }
     
-    func generateRandomString() -> String {
-        let length = Int.random(in: 3...5)
-        let characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%"
-        return String((0..<length).map { _ in characters.randomElement()! })
+    private func removePunctuation(from text: String) -> String {
+        // Remove all punctuation characters but keep spaces and letters
+        let allowedCharacters = CharacterSet.letters.union(.whitespaces)
+        return text.components(separatedBy: allowedCharacters.inverted).joined()
+    }
+    
+    private func updateCurrentChunk(for time: Double) {
+        let active = chunks.first { chunk in
+            time >= chunk.startTime && time < chunk.endTime
+        }
+        
+        // Direct assignment without animation
+        if currentChunk?.id != active?.id {
+            currentChunk = active
+        }
     }
 }
 
@@ -142,7 +265,9 @@ struct GlassEffectText: View {
         Text(text)
             .font(Font(font))
             .opacity(0)
-            .glassEffect((isClear ? Glass.clear : Glass.regular).tint(glassTint), in: textShape)
+            .glassEffect((Glass.clear).tint(.clear), in: textShape)
+            .colorInvert()
+            .shadow(color: Color.black.opacity(0.5), radius: 5, x: 10, y: 15)
     }
 }
 
