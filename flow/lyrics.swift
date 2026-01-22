@@ -81,7 +81,6 @@ struct SpotifyAuthResponse: Codable {
 }
 
 // MARK: - Local Callback Server
-// (Kept as provided in your original code)
 class LocalCallbackServer {
     private var listener: NWListener?
     private let port: UInt16

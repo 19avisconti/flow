@@ -161,6 +161,7 @@ struct SpotifyOverlayView: View {
     private let processor = LyricProcessor()
     private let horizontalPadding: CGFloat = 80
     private let verticalPadding: CGFloat = 80
+    private let maxCharsPerLine = 15
     
     init() {
         let service = SpotifyService(spDc: APIconstants.sp_dc)
@@ -190,11 +191,18 @@ struct SpotifyOverlayView: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                         }
                     } else {
+                        // Full line mode with multi-line support
                         if let line = currentLine {
-                            GlassEffectText(
-                                text: line.words + " ",
-                                font: NSFont(name: "ROUND8-FOUR", size: fontSize * 1.7) ?? NSFont.systemFont(ofSize: fontSize)
-                            )
+                            let splitLines = splitIntoLines(text: line.words)
+                            
+                            VStack(spacing: 5) {
+                                ForEach(Array(splitLines.enumerated()), id: \.offset) { index, lineText in
+                                    GlassEffectText(
+                                        text: lineText + " ",
+                                        font: NSFont(name: "ROUND8-FOUR", size: fontSize * 1.7) ?? NSFont.systemFont(ofSize: fontSize)
+                                    )
+                                }
+                            }
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                         }
                     }
@@ -251,6 +259,40 @@ struct SpotifyOverlayView: View {
         }
     }
     
+    // Split text into lines at word boundaries
+    private func splitIntoLines(text: String) -> [String] {
+        // If text is short enough, return as single line
+        if text.count <= maxCharsPerLine {
+            return [text]
+        }
+        
+        let words = text.split(separator: " ").map(String.init)
+        var lines: [String] = []
+        var currentLine = ""
+        
+        for word in words {
+            let testLine = currentLine.isEmpty ? word : "\(currentLine) \(word)"
+            
+            if testLine.count <= maxCharsPerLine {
+                currentLine = testLine
+            } else {
+                // Current line is full, start new line
+                if !currentLine.isEmpty {
+                    lines.append(currentLine)
+                }
+                currentLine = word
+            }
+        }
+        
+        // Add remaining text
+        if !currentLine.isEmpty {
+            lines.append(currentLine)
+        }
+        
+        // No limit on number of lines - create as many rows as needed
+        return lines
+    }
+    
     private func updateFontSize() {
         let text: String
         if displayModeManager.displayMode == .chunks {
@@ -278,6 +320,14 @@ struct SpotifyOverlayView: View {
         
         let fontName = "ROUND8-FOUR"
         
+        // For full line mode, measure with split lines
+        let textLines: [String]
+        if displayModeManager.displayMode == .fullLine {
+            textLines = splitIntoLines(text: text)
+        } else {
+            textLines = [text]
+        }
+        
         var minSize: CGFloat = 20
         var maxSize: CGFloat = 800
         var optimalSize: CGFloat = 100
@@ -286,9 +336,22 @@ struct SpotifyOverlayView: View {
             let testSize = (minSize + maxSize) / 2
             let testFont = NSFont(name: fontName, size: testSize * 1.7) ?? NSFont.systemFont(ofSize: testSize * 1.7)
             
-            let textSize = measureTextSize(text: text, font: testFont)
+            // Measure all lines and get max width and total height
+            var maxWidth: CGFloat = 0
+            var totalHeight: CGFloat = 0
             
-            if textSize.width <= availableWidth && textSize.height <= availableHeight {
+            for (index, lineText) in textLines.enumerated() {
+                let lineSize = measureTextSize(text: lineText, font: testFont)
+                maxWidth = max(maxWidth, lineSize.width)
+                totalHeight += lineSize.height
+                
+                // Add spacing between lines (except for last line)
+                if index < textLines.count - 1 {
+                    totalHeight += 5 // Match the VStack spacing
+                }
+            }
+            
+            if maxWidth <= availableWidth && totalHeight <= availableHeight {
                 optimalSize = testSize
                 minSize = testSize
             } else {
@@ -385,7 +448,7 @@ struct GlassEffectText: View {
                 .colorInvert()
         }
         .compositingGroup()
-        .opacity(0.5)
+        .opacity(0.7)
         .shadow(color: Color.black.opacity(0.3), radius: 5, x: 10, y: 15)
     }
 }
