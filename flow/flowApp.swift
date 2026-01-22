@@ -26,10 +26,17 @@ enum LyricDisplayMode: String {
     case fullLine = "Full Lines"
 }
 
+// MARK: - Size Mode (Shared)
+enum LyricSizeMode: String {
+    case full = "Full"
+    case small = "Small"
+}
+
 // MARK: - Shared State Manager
 class DisplayModeManager: ObservableObject {
     static let shared = DisplayModeManager()
     @Published var displayMode: LyricDisplayMode = .chunks
+    @Published var sizeMode: LyricSizeMode = .full
     
     private init() {}
 }
@@ -77,6 +84,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         displayModeItem.submenu = displayModeSubmenu
         
         menu.addItem(displayModeItem)
+        
+        // Size Mode submenu
+        let sizeModeItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
+        let sizeModeSubmenu = NSMenu()
+        
+        let fullSizeItem = NSMenuItem(title: "Full", action: #selector(setFullSize), keyEquivalent: "")
+        fullSizeItem.target = self
+        fullSizeItem.state = displayModeManager.sizeMode == .full ? .on : .off
+        
+        let smallSizeItem = NSMenuItem(title: "Small", action: #selector(setSmallSize), keyEquivalent: "")
+        smallSizeItem.target = self
+        smallSizeItem.state = displayModeManager.sizeMode == .small ? .on : .off
+        
+        sizeModeSubmenu.addItem(fullSizeItem)
+        sizeModeSubmenu.addItem(smallSizeItem)
+        sizeModeItem.submenu = sizeModeSubmenu
+        
+        menu.addItem(sizeModeItem)
         menu.addItem(NSMenuItem.separator())
         
         // Quit item
@@ -96,16 +121,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuCheckmarks()
     }
     
+    @objc private func setFullSize() {
+        displayModeManager.sizeMode = .full
+        updateMenuCheckmarks()
+    }
+    
+    @objc private func setSmallSize() {
+        displayModeManager.sizeMode = .small
+        updateMenuCheckmarks()
+    }
+    
     private func updateMenuCheckmarks() {
-        guard let menu = statusItem?.menu,
-              let displayModeItem = menu.items.first,
-              let submenu = displayModeItem.submenu else { return }
+        guard let menu = statusItem?.menu else { return }
         
-        for item in submenu.items {
-            if item.title == "Chunks" {
-                item.state = displayModeManager.displayMode == .chunks ? .on : .off
-            } else if item.title == "Full Lines" {
-                item.state = displayModeManager.displayMode == .fullLine ? .on : .off
+        // Update Display Mode checkmarks
+        if let displayModeItem = menu.items.first,
+           let submenu = displayModeItem.submenu {
+            for item in submenu.items {
+                if item.title == "Chunks" {
+                    item.state = displayModeManager.displayMode == .chunks ? .on : .off
+                } else if item.title == "Full Lines" {
+                    item.state = displayModeManager.displayMode == .fullLine ? .on : .off
+                }
+            }
+        }
+        
+        // Update Size Mode checkmarks
+        if menu.items.count > 1,
+           let sizeModeItem = menu.items[1] as NSMenuItem?,
+           let submenu = sizeModeItem.submenu {
+            for item in submenu.items {
+                if item.title == "Full" {
+                    item.state = displayModeManager.sizeMode == .full ? .on : .off
+                } else if item.title == "Small" {
+                    item.state = displayModeManager.sizeMode == .small ? .on : .off
+                }
             }
         }
     }
@@ -161,7 +211,10 @@ struct SpotifyOverlayView: View {
     private let processor = LyricProcessor()
     private let horizontalPadding: CGFloat = 80
     private let verticalPadding: CGFloat = 80
-    private let maxCharsPerLine = 15
+    
+    // Small mode settings
+    private let smallModeBottomPadding: CGFloat = 150
+    private let smallModeFontSize: CGFloat = 40
     
     init() {
         let service = SpotifyService(spDc: APIconstants.sp_dc)
@@ -181,29 +234,53 @@ struct SpotifyOverlayView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.black.opacity(0.3))
                 } else {
-                    // Display based on current mode
+                    // Display based on current mode and size
                     if displayModeManager.displayMode == .chunks {
                         if let chunk = currentChunk {
-                            GlassEffectText(
-                                text: chunk.text + " ",
-                                font: NSFont(name: "ROUND8-FOUR", size: fontSize * 1.7) ?? NSFont.systemFont(ofSize: fontSize)
-                            )
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                        }
-                    } else {
-                        // Full line mode with multi-line support
-                        if let line = currentLine {
-                            let splitLines = splitIntoLines(text: line.words)
+                            let displayFont = displayModeManager.sizeMode == .small
+                                ? NSFont(name: "ROUND8-FOUR", size: smallModeFontSize * 1.7) ?? NSFont.systemFont(ofSize: smallModeFontSize)
+                                : NSFont(name: "ROUND8-FOUR", size: fontSize * 1.7) ?? NSFont.systemFont(ofSize: fontSize)
+                            
+                            let splitLines = splitIntoLines(text: chunk.text, font: displayFont)
                             
                             VStack(spacing: 5) {
                                 ForEach(Array(splitLines.enumerated()), id: \.offset) { index, lineText in
                                     GlassEffectText(
                                         text: lineText + " ",
-                                        font: NSFont(name: "ROUND8-FOUR", size: fontSize * 1.7) ?? NSFont.systemFont(ofSize: fontSize)
+                                        font: displayFont
                                     )
                                 }
                             }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                            .if(displayModeManager.sizeMode == .small) { view in
+                                view.position(
+                                    x: geometry.size.width / 2,
+                                    y: geometry.size.height - smallModeBottomPadding
+                                )
+                            }
+                        }
+                    } else {
+                        // Full line mode with multi-line support
+                        if let line = currentLine {
+                            let displayFont = displayModeManager.sizeMode == .small
+                                ? NSFont(name: "ROUND8-FOUR", size: smallModeFontSize * 1.7) ?? NSFont.systemFont(ofSize: smallModeFontSize)
+                                : NSFont(name: "ROUND8-FOUR", size: fontSize * 1.7) ?? NSFont.systemFont(ofSize: fontSize)
+                            
+                            let splitLines = splitIntoLines(text: line.words, font: displayFont)
+                            
+                            VStack(spacing: 5) {
+                                ForEach(Array(splitLines.enumerated()), id: \.offset) { index, lineText in
+                                    GlassEffectText(
+                                        text: lineText + " ",
+                                        font: displayFont
+                                    )
+                                }
+                            }
+                            .if(displayModeManager.sizeMode == .small) { view in
+                                view.position(
+                                    x: geometry.size.width / 2,
+                                    y: geometry.size.height - smallModeBottomPadding
+                                )
+                            }
                         }
                     }
                 }
@@ -241,6 +318,9 @@ struct SpotifyOverlayView: View {
         .onChange(of: displayModeManager.displayMode) { oldValue, newValue in
             updateFontSize()
         }
+        .onChange(of: displayModeManager.sizeMode) { oldValue, newValue in
+            updateFontSize()
+        }
         .onChange(of: currentChunk?.text) { oldValue, newValue in
             if displayModeManager.displayMode == .chunks {
                 updateFontSize()
@@ -259,10 +339,11 @@ struct SpotifyOverlayView: View {
         }
     }
     
-    // Split text into lines at word boundaries
-    private func splitIntoLines(text: String) -> [String] {
-        // If text is short enough, return as single line
-        if text.count <= maxCharsPerLine {
+    // Split text into lines based on actual display width with padding
+    private func splitIntoLines(text: String, font: NSFont) -> [String] {
+        let availableWidth = screenWidth - (horizontalPadding * 2)
+        
+        guard availableWidth > 0 else {
             return [text]
         }
         
@@ -272,11 +353,12 @@ struct SpotifyOverlayView: View {
         
         for word in words {
             let testLine = currentLine.isEmpty ? word : "\(currentLine) \(word)"
+            let testWidth = measureTextSize(text: testLine, font: font).width
             
-            if testLine.count <= maxCharsPerLine {
+            if testWidth <= availableWidth {
                 currentLine = testLine
             } else {
-                // Current line is full, start new line
+                // Current line would exceed width, start new line
                 if !currentLine.isEmpty {
                     lines.append(currentLine)
                 }
@@ -289,11 +371,16 @@ struct SpotifyOverlayView: View {
             lines.append(currentLine)
         }
         
-        // No limit on number of lines - create as many rows as needed
-        return lines
+        return lines.isEmpty ? [text] : lines
     }
     
     private func updateFontSize() {
+        // Skip font size calculation in small mode
+        if displayModeManager.sizeMode == .small {
+            fontSize = smallModeFontSize
+            return
+        }
+        
         let text: String
         if displayModeManager.displayMode == .chunks {
             text = currentChunk?.text ?? ""
@@ -320,14 +407,6 @@ struct SpotifyOverlayView: View {
         
         let fontName = "ROUND8-FOUR"
         
-        // For full line mode, measure with split lines
-        let textLines: [String]
-        if displayModeManager.displayMode == .fullLine {
-            textLines = splitIntoLines(text: text)
-        } else {
-            textLines = [text]
-        }
-        
         var minSize: CGFloat = 20
         var maxSize: CGFloat = 800
         var optimalSize: CGFloat = 100
@@ -335,6 +414,9 @@ struct SpotifyOverlayView: View {
         while maxSize - minSize > 1 {
             let testSize = (minSize + maxSize) / 2
             let testFont = NSFont(name: fontName, size: testSize * 1.7) ?? NSFont.systemFont(ofSize: testSize * 1.7)
+            
+            // Split text into lines based on available width
+            let textLines = splitIntoLines(text: text, font: testFont)
             
             // Measure all lines and get max width and total height
             var maxWidth: CGFloat = 0
@@ -515,5 +597,17 @@ extension NSFont {
 extension NSFont {
     static func systemBold(ofSize size: CGFloat) -> NSFont {
         return NSFont.systemFont(ofSize: size, weight: .bold)
+    }
+}
+
+// Helper extension for conditional view modifiers
+extension View {
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
     }
 }
